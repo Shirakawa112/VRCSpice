@@ -260,6 +260,11 @@ public class BreadboardController : UdonSharpBehaviour
         palette.Refresh();
     }
 
+    public void SimulationSettingsChanged()
+    {
+        state.Initialize(); adapter.QueueSettingsApply();
+    }
+
     public void ShowFeedback(string message) { feedback = message; feedbackUntil = Time.time + 2f; }
     private void CancelVisuals()
     {
