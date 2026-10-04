@@ -8,6 +8,7 @@ uint _IntegrationScheme;
 uint _MaxNewtonIterations;
 uint _SettingsRevision;
 uint _ClearHistoryRevision;
+uint _RestartRevision;
 float _OutputDeltaTime;
 
 Texture2D<uint> _MainTex;
@@ -26,9 +27,9 @@ float SolverLoadFloat(uint2 pixel)
 uint SolverStoreUInt(uint value) { return value; }
 uint SolverStoreFloat(float value) { return asuint(value); }
 
-// Header row.  All normalized time values are dimensionless fractions of
-// _OutputDeltaTime.  The output history is therefore uniformly spaced even
-// though accepted internal steps are adaptive.
+// Header row. All normalized time values are dimensionless fractions of
+// _OutputDeltaTime. Output samples are uniformly spaced even though accepted
+// internal steps are adaptive.
 #define OFFSET_SOLVER_STATE          uint2(0, 0)
 #define OFFSET_LOOP_COUNTER          uint2(1, 0)
 #define OFFSET_NR_ITER_N             uint2(2, 0)
@@ -42,6 +43,8 @@ uint SolverStoreFloat(float value) { return asuint(value); }
 #define OFFSET_OUTPUT_COUNT          uint2(10, 0)
 #define OFFSET_SCHEME                uint2(11, 0)
 #define OFFSET_LAST_OUTPUT_TIME      uint2(12, 0)
+#define OFFSET_OUTPUT_SEQUENCE       uint2(13, 0)
+#define OFFSET_APPLIED_RESTART       uint2(14, 0)
 
 #define OFFSET_COMMITTED_VECTOR      uint2(0, 1)
 #define OFFSET_STAGE_VECTOR          uint2(0, 2)
@@ -69,7 +72,7 @@ uint SolverStoreFloat(float value) { return asuint(value); }
 #define MAX_REJECT_COUNT             20u
 #define NEWTON_PRECISION             1e-6
 #define PIVOT_MINIMUM                1e-20
-#define OUTPUT_BUFFER_LENGTH         256u
+#define OUTPUT_BUFFER_LENGTH         1000u
 
 #define STATE SolverLoadUInt(OFFSET_SOLVER_STATE)
 #define LOOP_I SolverLoadUInt(OFFSET_LOOP_COUNTER)

@@ -240,7 +240,8 @@ public static class PredictorlessSolverVerification
         Material material=new Material(shader);
         if (solverShader)
             Check(material.HasProperty("_TimeEvolution") && material.HasProperty("_SYSTEM_N") &&
-                material.HasProperty("_OutputDeltaTime") && material.HasProperty("_MaxNewtonIterations"),
+                material.HasProperty("_OutputDeltaTime") && material.HasProperty("_MaxNewtonIterations") &&
+                material.HasProperty("_RestartRevision"),
                 "solver properties "+path);
         else
             Check(material.HasProperty("_SrcMatSize") && material.HasProperty("_DstMatSize") &&
@@ -312,7 +313,7 @@ public static class PredictorlessSolverVerification
         for(int i=0;i<accepted.Length;i++)composed=LinearStep(scalarC,scalarG,zero,new double[]{composed},accepted[i]*.1,true)[0];
         Check(System.Math.Abs(composed-System.Math.Exp(-.1))<3e-10,"accepted substeps compose one output interval");
         double previous=0.0;
-        for(int i=0;i<256;i++)
+        for(int i=0;i<1000;i++)
         {
             double time=(i+1)*.01;
             if(i>0)Check(System.Math.Abs(time-previous-.01)<1e-12,"uniform output time "+i);

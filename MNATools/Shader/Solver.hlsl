@@ -70,6 +70,7 @@ uint initialize_solver(uint2 pixel)
     else if(!any(pixel-OFFSET_CURRENT_TIME))result=SolverLoadUInt(OFFSET_LAST_OUTPUT_TIME);
     else if(!any(pixel-OFFSET_APPLIED_SETTINGS))result=_SettingsRevision;
     else if(!any(pixel-OFFSET_APPLIED_HISTORY))result=_ClearHistoryRevision;
+    else if(!any(pixel-OFFSET_APPLIED_RESTART))result=_RestartRevision;
     else if(!any(pixel-OFFSET_SCHEME))result=_IntegrationScheme;
     return result;
 }
@@ -191,6 +192,7 @@ uint push_output(uint2 pixel)
     else if(!any(pixel-OFFSET_NORMALIZED_PROGRESS))result=SolverStoreFloat(0.0);
     else if(!any(pixel-OFFSET_NORMALIZED_STEP))result=SolverStoreFloat(0.1);
     else if(!any(pixel-OFFSET_OUTPUT_COUNT))result=min(OUTPUT_BUFFER_LENGTH,SolverLoadUInt(pixel)+1u);
+    else if(!any(pixel-OFFSET_OUTPUT_SEQUENCE))result=SolverLoadUInt(pixel)+1u;
     else if(!any(pixel-OFFSET_LAST_OUTPUT_TIME))result=SolverLoadUInt(OFFSET_CURRENT_TIME);
     return result;
 }
@@ -200,19 +202,23 @@ uint settings_reset(uint2 pixel)
     uint result=SolverLoadUInt(pixel);
     uint count=SolverLoadUInt(OFFSET_OUTPUT_COUNT);
     bool clearHistory=SolverLoadUInt(OFFSET_APPLIED_HISTORY)!=_ClearHistoryRevision;
+    bool restart=SolverLoadUInt(OFFSET_APPLIED_RESTART)!=_RestartRevision;
     if(pixel.y==OFFSET_COMMITTED_VECTOR.y && pixel.x<_DATA_N)
-        result=SolverStoreFloat(count>0u?get_data(0u,pixel.x):0.0);
-    else if(clearHistory && pixel.y>=OFFSET_OUT_BUFFER.y &&
+        result=restart?SolverStoreFloat(0.0):SolverStoreFloat(count>0u?get_data(0u,pixel.x):0.0);
+    else if((clearHistory || restart) && pixel.y>=OFFSET_OUT_BUFFER.y &&
         pixel.y<OFFSET_OUT_BUFFER.y+OUTPUT_BUFFER_LENGTH)result=0u;
     else if(!any(pixel-OFFSET_NORMALIZED_PROGRESS))result=SolverStoreFloat(0.0);
     else if(!any(pixel-OFFSET_NORMALIZED_STEP))result=SolverStoreFloat(0.1);
-    else if(!any(pixel-OFFSET_CURRENT_TIME))result=SolverLoadUInt(OFFSET_LAST_OUTPUT_TIME);
+    else if(!any(pixel-OFFSET_CURRENT_TIME))result=restart?SolverStoreFloat(0.0):SolverLoadUInt(OFFSET_LAST_OUTPUT_TIME);
     else if(!any(pixel-OFFSET_LOOP_COUNTER) || !any(pixel-OFFSET_NR_ITER_N) ||
         !any(pixel-OFFSET_REJECT_COUNT) || !any(pixel-OFFSET_FAILURE_FLAG))result=0u;
     else if(!any(pixel-OFFSET_APPLIED_SETTINGS))result=_SettingsRevision;
     else if(!any(pixel-OFFSET_APPLIED_HISTORY))result=_ClearHistoryRevision;
+    else if(!any(pixel-OFFSET_APPLIED_RESTART))result=_RestartRevision;
     else if(!any(pixel-OFFSET_SCHEME))result=_IntegrationScheme;
-    else if(clearHistory && !any(pixel-OFFSET_OUTPUT_COUNT))result=0u;
+    else if((clearHistory || restart) &&
+        (!any(pixel-OFFSET_OUTPUT_COUNT) || !any(pixel-OFFSET_OUTPUT_SEQUENCE)))result=0u;
+    else if(restart && !any(pixel-OFFSET_LAST_OUTPUT_TIME))result=0u;
     return result;
 }
 
@@ -241,6 +247,7 @@ uint flowControl(uint2 pixel)
     {
         if(SolverLoadUInt(OFFSET_APPLIED_SETTINGS)!=_SettingsRevision ||
             SolverLoadUInt(OFFSET_APPLIED_HISTORY)!=_ClearHistoryRevision ||
+            SolverLoadUInt(OFFSET_APPLIED_RESTART)!=_RestartRevision ||
             SolverLoadUInt(OFFSET_SCHEME)!=_IntegrationScheme)
             return STATE_SETTINGS_RESET;
 

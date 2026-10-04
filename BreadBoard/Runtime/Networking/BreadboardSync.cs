@@ -75,6 +75,37 @@ public class BreadboardSync : UdonSharpBehaviour
         pendingPurpose = 1; pendingToken++; dirty = true; nextSendTime = 0f;
         controller.SimulationSettingsChanged();
     }
+
+    public void RequestSimulationRestart()
+    {
+        if (!hasState || !Utilities.IsValid(Networking.LocalPlayer) || !Networking.IsNetworkSettled) return;
+        if (Networking.IsOwner(gameObject)) AcceptSimulationRestart(Networking.LocalPlayer.playerId);
+        else SendCustomNetworkEvent(NetworkEventTarget.Owner, nameof(ReceiveSimulationRestartRequest));
+    }
+
+    [NetworkCallable(maxEventsPerSecond: 4)]
+    public void ReceiveSimulationRestartRequest()
+    {
+        VRCPlayerApi caller = NetworkCalling.CallingPlayer;
+        if (!Utilities.IsValid(caller)) return;
+        AcceptSimulationRestart(caller.playerId);
+    }
+
+    private void AcceptSimulationRestart(int playerId)
+    {
+        if (!Networking.IsOwner(gameObject) || !hasState || dirty || awaitingGrant) return;
+        string before = codec.Encode();
+        if (!state.RestartSimulation()) return;
+        string after = codec.Encode();
+        if (string.IsNullOrEmpty(after))
+        {
+            if (codec.TryDecode(before)) codec.ApplyDecoded();
+            return;
+        }
+        pendingSnapshot = after; pendingGrant = playerId; pendingGrantRevision = state.revision;
+        pendingPurpose = 1; pendingToken++; dirty = true; nextSendTime = 0f;
+        controller.SimulationRestarted();
+    }
     // Requests travel through this scene behaviour, never through dynamically created network objects.
     public void RequestButton(int id, bool held, int gesture)
     {
@@ -333,6 +364,7 @@ public class BreadboardSync : UdonSharpBehaviour
         int oldCircuitRevision = state.circuitRevision;
         int oldSettingsRevision = state.solverSettingsRevision;
         int oldHistoryRevision = state.solverHistoryRevision;
+        int oldRestartRevision = state.solverRestartRevision;
         if (changed) codec.ApplyDecoded();
         sharedSnapshot = snapshot;
         sharedProbe1 = probe1Hole; sharedProbe2 = probe2Hole; sharedProbeRevision = probeRevision;
@@ -349,6 +381,7 @@ public class BreadboardSync : UdonSharpBehaviour
             if (oldCircuitRevision != state.circuitRevision) controller.CircuitChanged();
             else if (oldSettingsRevision != state.solverSettingsRevision || oldHistoryRevision != state.solverHistoryRevision)
                 controller.SimulationSettingsChanged();
+            if (oldRestartRevision != state.solverRestartRevision) controller.SimulationRestarted();
         }
         VRCPlayerApi local = Networking.LocalPlayer;
         if (Utilities.IsValid(local) && !Networking.IsOwner(gameObject) && acceptedGrant == local.playerId &&

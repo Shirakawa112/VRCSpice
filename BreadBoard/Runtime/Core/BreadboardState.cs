@@ -18,6 +18,7 @@ public class BreadboardState : UdonSharpBehaviour
     [HideInInspector] public int maxNewtonIterations = 32;
     [HideInInspector] public int solverSettingsRevision = 1;
     [HideInInspector] public int solverHistoryRevision = 1;
+    [HideInInspector] public int solverRestartRevision = 1;
     [HideInInspector] public int[] ids, kinds, pin0, pin1, pin2, orientations, lengths, models, occupants;
     [HideInInspector] public float[] values;
     [HideInInspector] public string error = "";
@@ -33,6 +34,7 @@ public class BreadboardState : UdonSharpBehaviour
         if (maxNewtonIterations < 1 || maxNewtonIterations > 256) maxNewtonIterations = 32;
         if (solverSettingsRevision < 1) solverSettingsRevision = 1;
         if (solverHistoryRevision < 1) solverHistoryRevision = 1;
+        if (solverRestartRevision < 1) solverRestartRevision = 1;
         ids = new int[capacity]; kinds = new int[capacity]; pin0 = new int[capacity];
         pin1 = new int[capacity]; pin2 = new int[capacity]; orientations = new int[capacity];
         lengths = new int[capacity]; models = new int[capacity]; values = new float[capacity];
@@ -122,6 +124,15 @@ public class BreadboardState : UdonSharpBehaviour
         maxNewtonIterations = newtonIterations;
         revision++; solverSettingsRevision++;
         if (timeChanged) solverHistoryRevision++;
+        return true;
+    }
+
+    public bool RestartSimulation()
+    {
+        Initialize(); error = "";
+        if (revision >= int.MaxValue || solverRestartRevision >= int.MaxValue)
+        { error = "Revision limit"; return false; }
+        revision++; solverRestartRevision++;
         return true;
     }
 

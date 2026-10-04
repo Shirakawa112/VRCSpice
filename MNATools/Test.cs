@@ -3,19 +3,15 @@ using UdonSharp;
 using UnityEngine;
 using VRC.SDK3.Data;
 
+// Manual solver harness. Oscilloscope display responsibilities live in
+// OscilloscopeController.
 public class Test : UdonSharpBehaviour
 {
     [SerializeField] private TMP_InputField netlistfield;
-    [SerializeField] private TMP_InputField probefield1;
-    [SerializeField] private TMP_InputField probefield2;
-    [SerializeField] private TMP_InputField yscalefield;
-    [SerializeField] private TMP_InputField xscalefield;
     [SerializeField] private TMP_InputField stepsPerFrame;
-    [SerializeField] private TMP_InputField maxError; // Retained for scene compatibility; no longer used.
+    [SerializeField] private TMP_InputField maxError; // Scene compatibility only.
     private MNAGen generator;
     private MNASolve solver;
-    private int oscind1 = int.MinValue;
-    private int oscind2 = int.MinValue;
 
     private void Start()
     {
@@ -26,22 +22,6 @@ public class Test : UdonSharpBehaviour
     private void Update()
     {
         if (solver == null) return;
-        int next1 = probefield1 != null && probefield1.text == "GND" ? -2 :
-            (probefield1 == null ? -1 : solver.label2bufferRow(probefield1.text));
-        int next2 = probefield2 != null && probefield2.text == "GND" ? -2 :
-            (probefield2 == null ? -1 : solver.label2bufferRow(probefield2.text));
-        Renderer target = GetComponent<Renderer>();
-        if (target == null) return;
-        if (oscind1 != next1) { oscind1 = next1; target.material.SetInteger("_Row1", oscind1); }
-        if (oscind2 != next2) { oscind2 = next2; target.material.SetInteger("_Row2", oscind2); }
-
-        float ydiv = 1f, xdiv = 1f;
-        if (yscalefield != null) float.TryParse(yscalefield.text, out ydiv);
-        if (xscalefield != null) float.TryParse(xscalefield.text, out xdiv);
-        solver.WriteToMaterial(target.material);
-        if (ydiv > 0f) target.material.SetFloat("_YScale", 0.1f / ydiv);
-        if (xdiv > 0f) target.material.SetFloat("_XScale", 0.1f / xdiv);
-
         int steps = 100;
         if (stepsPerFrame != null) int.TryParse(stepsPerFrame.text, out steps);
         if (steps > 0) solver.SetStepPerFrame(steps);

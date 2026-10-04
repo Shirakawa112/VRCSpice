@@ -3,6 +3,7 @@ using UnityEngine.UI;
 using UnityEditor;
 using UnityEditor.Events;
 using UnityEditor.SceneManagement;
+using UnityEngine.SceneManagement;
 using TMPro;
 using TMPro.EditorUtilities;
 using UdonSharp;
@@ -67,12 +68,28 @@ public static class MnaSettingsPanelBuilder
 
     private static Transform FindSolverNet()
     {
-        Canvas[] canvases = Object.FindObjectsOfType<Canvas>(true);
-        for (int i = 0; i < canvases.Length; i++)
+        Scene scene = SceneManager.GetActiveScene();
+        GameObject[] roots = scene.GetRootGameObjects();
+        for (int i = 0; i < roots.Length; i++)
         {
-            Transform candidate = canvases[i].transform;
-            if (candidate.name == "Net" && candidate.Find("Error InputField") != null) return candidate;
+            Transform[] candidates = roots[i].GetComponentsInChildren<Transform>(true);
+            for (int j = 0; j < candidates.Length; j++)
+            {
+                if (candidates[j].name != "Net") continue;
+                Transform[] descendants = candidates[j].GetComponentsInChildren<Transform>(true);
+                for (int k = 0; k < descendants.Length; k++)
+                    if (descendants[k].name == "Error InputField") return candidates[j];
+            }
         }
+        return null;
+    }
+
+    private static MNASolve FindSolver()
+    {
+        Scene scene = SceneManager.GetActiveScene();
+        MNASolve[] solvers = Resources.FindObjectsOfTypeAll<MNASolve>();
+        for (int i = 0; i < solvers.Length; i++)
+            if (solvers[i] != null && solvers[i].gameObject.scene == scene) return solvers[i];
         return null;
     }
 
@@ -82,9 +99,10 @@ public static class MnaSettingsPanelBuilder
         EnsurePanelProgramAsset();
         var scene = EditorSceneManager.OpenScene(ScenePath, OpenSceneMode.Single);
         Transform net = FindSolverNet();
-        MNASolve solver = Object.FindObjectOfType<MNASolve>(true);
+        MNASolve solver = FindSolver();
         if (net == null || solver == null)
-            throw new System.InvalidOperationException("Solver Net with Error InputField, or MNASolve, was not found in Scene.unity.");
+            throw new System.InvalidOperationException("Scene lookup failed: Net=" + (net != null) +
+                ", MNASolve=" + (solver != null) + ".");
 
         BreadboardState state = Object.FindObjectOfType<BreadboardState>(true);
         BreadboardSync sync = Object.FindObjectOfType<BreadboardSync>(true);
@@ -173,6 +191,33 @@ public static class MnaSettingsPanelBuilder
             nameof(MnaSettingsPanel.ChangeSettings));
     }
 
+    private static void WireRestartButton(VRC.Udon.UdonBehaviour backing, Transform panel)
+    {
+        Button restartButton = null;
+        Button[] buttons = Object.FindObjectsOfType<Button>(true);
+        for (int i = 0; i < buttons.Length && restartButton == null; i++)
+        {
+            TMP_Text[] labels = buttons[i].GetComponentsInChildren<TMP_Text>(true);
+            for (int j = 0; j < labels.Length; j++)
+                if (labels[j] != null && labels[j].text == "Restart sim")
+                { restartButton = buttons[i]; break; }
+        }
+        if (restartButton == null)
+        {
+            GameObject buttonObject = TMP_DefaultControls.CreateButton(StandardResources());
+            buttonObject.name = "RestartSimulationButton";
+            Parent(buttonObject, panel, new Vector2(0f, -125f), new Vector2(270f, 40f));
+            restartButton = buttonObject.GetComponent<Button>();
+            TMP_Text label = buttonObject.GetComponentInChildren<TMP_Text>(true);
+            if (label != null) { label.text = "Restart sim"; label.alignment = TextAlignmentOptions.Center; }
+        }
+        for (int i = restartButton.onClick.GetPersistentEventCount() - 1; i >= 0; i--)
+            UnityEventTools.RemovePersistentListener(restartButton.onClick, i);
+        UnityEventTools.AddStringPersistentListener(restartButton.onClick, backing.SendCustomEvent,
+            nameof(MnaSettingsPanel.RestartSimulation));
+        EditorUtility.SetDirty(restartButton);
+    }
+
     private static void Install(Transform net, MNASolve solver, BreadboardState state, BreadboardSync sync)
     {
         Transform old = net.Find("SolverSettingsPanel");
@@ -216,7 +261,7 @@ public static class MnaSettingsPanelBuilder
         newtonInput.contentType = TMP_InputField.ContentType.IntegerNumber; newtonInput.lineType = TMP_InputField.LineType.SingleLine;
         newtonInput.text = (state == null ? solver.GetMaxNewtonIterations() : state.maxNewtonIterations).ToString();
 
-        TMP_Text status = Text("SolverStatus", panel.transform, "", new Vector2(0f, -100f), new Vector2(380f, 75f), 17);
+        TMP_Text status = Text("SolverStatus", panel.transform, "", new Vector2(0f, -82f), new Vector2(380f, 42f), 17);
         status.alignment = TextAlignmentOptions.Center;
 
         MnaSettingsPanel behaviour = panel.AddUdonSharpComponent<MnaSettingsPanel>();
@@ -228,6 +273,7 @@ public static class MnaSettingsPanelBuilder
         AddChangeEvent(dropdown.onValueChanged, backing);
         AddChangeEvent(timeInput.onSubmit, backing); AddChangeEvent(timeInput.onEndEdit, backing);
         AddChangeEvent(newtonInput.onSubmit, backing); AddChangeEvent(newtonInput.onEndEdit, backing);
+        WireRestartButton(backing, panel.transform);
         if (dropdown.onValueChanged.GetPersistentEventCount() < 1 ||
             timeInput.onSubmit.GetPersistentEventCount() < 1 || timeInput.onEndEdit.GetPersistentEventCount() < 1 ||
             newtonInput.onSubmit.GetPersistentEventCount() < 1 || newtonInput.onEndEdit.GetPersistentEventCount() < 1)

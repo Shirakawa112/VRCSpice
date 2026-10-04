@@ -12,12 +12,14 @@ public class MNASolve : UdonSharpBehaviour
     [SerializeField] private Material processor;
     [SerializeField] private Material flowControl;
     [SerializeField] private Material CopyColumn;
+    [SerializeField] private Material dumpExtractor;
+    // Internal diagnostics only. Public consumers use the stable output dump.
     [SerializeField] private Material[] outputMaterial;
     [SerializeField] private int integrationScheme = SchemeRadauIIA5;
     [SerializeField] private float maxdeltatime = 0.00001f;
     [SerializeField] private int maxNewtonIterations = 32;
 
-    private RenderTexture buffer0, buffer1, tmpbuffer;
+    private RenderTexture buffer0, buffer1, tmpbuffer, outputDump;
     private Texture2D A, B, C, rhs, Is, timeEvolution;
     private uint[] C_row;
     private byte[] C_bytes;
@@ -29,7 +31,10 @@ public class MNASolve : UdonSharpBehaviour
     private bool initialized;
     private int settingsRevision = 1;
     private int clearHistoryRevision = 1;
-    private const int BufferLength = 256;
+    private int restartRevision = 1;
+    private int dumpGeneration = 1;
+    private const int BufferLength = 1000;
+    private const int DumpTextureHeight = 1024;
 
     [SerializeField] private bool stepexecution;
     [SerializeField] private bool EXECUTE;
@@ -124,7 +129,7 @@ public class MNASolve : UdonSharpBehaviour
         maxdeltatime = value;
         maxNewtonIterations = newtonIterations;
         settingsRevision++;
-        if (timeChanged) clearHistoryRevision++;
+        if (timeChanged) { clearHistoryRevision++; AdvanceDumpGeneration(); }
     }
 
     public void ApplySynchronizedSettings(int scheme, float value, int newtonIterations,
@@ -133,11 +138,28 @@ public class MNASolve : UdonSharpBehaviour
         if ((scheme != SchemeRadauIIA5 && scheme != SchemeBackwardEuler) ||
             float.IsNaN(value) || float.IsInfinity(value) || value <= 0f ||
             newtonIterations < 1 || newtonIterations > 256) return;
+        bool historyChanged = clearHistoryRevision != Mathf.Max(1, historyRevision);
         integrationScheme = scheme;
         maxdeltatime = value;
         maxNewtonIterations = newtonIterations;
         settingsRevision = Mathf.Max(1, revision);
         clearHistoryRevision = Mathf.Max(1, historyRevision);
+        if (historyChanged) AdvanceDumpGeneration();
+    }
+
+    public void RestartSimulation()
+    {
+        if (restartRevision >= int.MaxValue) return;
+        restartRevision++;
+        AdvanceDumpGeneration();
+    }
+
+    public void ApplySynchronizedRestart(int revision)
+    {
+        int next = Mathf.Max(1, revision);
+        if (restartRevision == next) return;
+        restartRevision = next;
+        AdvanceDumpGeneration();
     }
 
     public int GetIntegrationScheme() { return integrationScheme; }
@@ -145,15 +167,68 @@ public class MNASolve : UdonSharpBehaviour
     public int GetMaxNewtonIterations() { return maxNewtonIterations; }
     public int GetSettingsRevision() { return settingsRevision; }
     public int GetClearHistoryRevision() { return clearHistoryRevision; }
+    public int GetRestartRevision() { return restartRevision; }
 
     public int label2bufferRow(string label) { return veclabels.IndexOf(label); }
 
-    public void WriteToMaterial(Material mat)
+    private void AdvanceDumpGeneration()
     {
-        if (mat == null || buffer0 == null || buffer1 == null) return;
-        mat.SetTexture("_MainTex", outputBuffer0 ? buffer0 : buffer1);
+        dumpGeneration = dumpGeneration >= int.MaxValue ? 1 : dumpGeneration + 1;
+    }
+
+    private RenderTexture ActiveSolverBuffer()
+    {
+        return outputBuffer0 ? buffer0 : buffer1;
+    }
+
+    public bool HasOutputDump() { return outputDump != null; }
+
+    public void WriteOutputDumpToMaterial(Material mat)
+    {
+        if (mat == null || outputDump == null) return;
+        mat.SetTexture("_SolverDump", outputDump);
         mat.SetInteger("_DATA_N", matrixsize);
         mat.SetFloat("_OutputDeltaTime", maxdeltatime);
+    }
+
+    // Compatibility entry point used by Breadboard renderers.
+    public void WriteToMaterial(Material mat)
+    {
+        if (mat == null || outputDump == null) return;
+        mat.SetTexture("_MainTex", outputDump);
+        mat.SetInteger("_DATA_N", matrixsize);
+        mat.SetFloat("_OutputDeltaTime", maxdeltatime);
+    }
+
+    private void ExtractOutputDump()
+    {
+        RenderTexture active = ActiveSolverBuffer();
+        if (dumpExtractor == null || outputDump == null || active == null) return;
+        dumpExtractor.SetInteger("_DATA_N", matrixsize);
+        dumpExtractor.SetInteger("_DumpGeneration", dumpGeneration);
+        dumpExtractor.SetFloat("_OutputDeltaTime", maxdeltatime);
+        VRCGraphics.Blit(active, outputDump, dumpExtractor);
+    }
+
+    private void WriteDiagnostics()
+    {
+        RenderTexture active = ActiveSolverBuffer();
+        if (active == null) return;
+        if (outputMaterial != null)
+            for (int i = 0; i < outputMaterial.Length; i++)
+            {
+                Material mat = outputMaterial[i];
+                if (mat == null) continue;
+                mat.SetTexture("_MainTex", active);
+                mat.SetInteger("_DATA_N", matrixsize);
+                mat.SetFloat("_OutputDeltaTime", maxdeltatime);
+            }
+        if (debugMat != null)
+        {
+            debugMat.SetTexture("_MainTex", active);
+            debugMat.SetInteger("_DATA_N", matrixsize);
+            debugMat.SetFloat("_OutputDeltaTime", maxdeltatime);
+        }
     }
 
     private void ConfigureMaterial(Material material)
@@ -172,6 +247,7 @@ public class MNASolve : UdonSharpBehaviour
         material.SetInteger("_MaxNewtonIterations", maxNewtonIterations);
         material.SetInteger("_SettingsRevision", settingsRevision);
         material.SetInteger("_ClearHistoryRevision", clearHistoryRevision);
+        material.SetInteger("_RestartRevision", restartRevision);
         material.SetFloat("_OutputDeltaTime", maxdeltatime);
     }
 
@@ -180,8 +256,6 @@ public class MNASolve : UdonSharpBehaviour
         ApplyTexture();
         ConfigureMaterial(processor);
         ConfigureMaterial(flowControl);
-        if (outputMaterial != null)
-            for (int i = 0; i < outputMaterial.Length; i++) WriteToMaterial(outputMaterial[i]);
 
         if (outputBuffer0)
         {
@@ -204,6 +278,8 @@ public class MNASolve : UdonSharpBehaviour
             }
         }
         outputBuffer0 = !outputBuffer0;
+        ExtractOutputDump();
+        WriteDiagnostics();
     }
 
     private RenderTexture CreateSolverBuffer(int width, int height)
@@ -229,6 +305,8 @@ public class MNASolve : UdonSharpBehaviour
         RenderTexture next0 = CreateSolverBuffer(width, height);
         RenderTexture next1 = CreateSolverBuffer(width, height);
         RenderTexture nextTmp = CreateSolverBuffer(width, height);
+        int dumpWidth = Mathf.NextPowerOfTwo(Mathf.Max(newmatrixsize + 1, 16));
+        RenderTexture nextOutputDump = CreateSolverBuffer(dumpWidth, DumpTextureHeight);
 
         Texture2D indexer = new Texture2D(width, 1, TextureFormat.RG32, false, true);
         byte[] indexerBytes = new byte[width * 4];
@@ -250,6 +328,8 @@ public class MNASolve : UdonSharpBehaviour
         indexer.Apply(false, false);
         CopyColumn.SetTexture("_IndexMat", indexer);
         CopyColumn.SetInteger("_DstMatSize", newmatrixsize);
+        // Resume from the most recent completed output. CopyColumn maps
+        // surviving labels and discards unfinished Newton/stage work.
         CopyColumn.SetInteger("_SrcMatSize", matrixsize);
         CopyColumn.SetInteger("_DstTexHeight", height);
         RenderTexture current = outputBuffer0 ? buffer0 : buffer1;
@@ -260,12 +340,15 @@ public class MNASolve : UdonSharpBehaviour
         if (buffer0 != null) Destroy(buffer0);
         if (buffer1 != null) Destroy(buffer1);
         if (tmpbuffer != null) Destroy(tmpbuffer);
+        if (outputDump != null) Destroy(outputDump);
         if (A != null) Destroy(A);
         if (B != null) Destroy(B);
         if (C != null) Destroy(C);
         if (rhs != null) Destroy(rhs);
         if (Is != null) Destroy(Is);
-        buffer0 = next0; buffer1 = next1; tmpbuffer = nextTmp;
+        buffer0 = next0; buffer1 = next1; tmpbuffer = nextTmp; outputDump = nextOutputDump;
+        outputBuffer0 = false;
+        AdvanceDumpGeneration();
 
         A = new Texture2D(mattexsize, mattexsize, TextureFormat.RFloat, false);
         B = new Texture2D(mattexsize, mattexsize, TextureFormat.RFloat, false);
@@ -283,8 +366,8 @@ public class MNASolve : UdonSharpBehaviour
         A.Apply(); B.Apply(); C.Apply(false, false); rhs.Apply(); Is.Apply();
         matrixsize = newmatrixsize;
         veclabels = newlabel.ShallowClone();
-        if (outputMaterial != null)
-            for (int i = 0; i < outputMaterial.Length; i++) WriteToMaterial(outputMaterial[i]);
+        ExtractOutputDump();
+        WriteDiagnostics();
         initialized = true;
     }
 

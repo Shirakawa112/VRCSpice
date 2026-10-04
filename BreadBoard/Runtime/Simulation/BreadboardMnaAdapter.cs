@@ -16,6 +16,7 @@ public class BreadboardMnaAdapter : UdonSharpBehaviour
     [HideInInspector] public int appliedCircuitRevision = -1;
     [HideInInspector] public int appliedSolverSettingsRevision = -1;
     [HideInInspector] public int appliedSolverHistoryRevision = -1;
+    [HideInInspector] public int appliedSolverRestartRevision = -1;
     private bool queued;
 
     public DataList BuildNetlist()
@@ -47,6 +48,7 @@ public class BreadboardMnaAdapter : UdonSharpBehaviour
     }
 
     public void QueueSettingsApply() { QueueApply(); }
+    public void QueueRestartApply() { QueueApply(); }
 
     public void ApplyLatest()
     {
@@ -61,6 +63,11 @@ public class BreadboardMnaAdapter : UdonSharpBehaviour
                 state.solverSettingsRevision, state.solverHistoryRevision);
             appliedSolverSettingsRevision = state.solverSettingsRevision;
             appliedSolverHistoryRevision = state.solverHistoryRevision;
+        }
+        if (solver != null && appliedSolverRestartRevision != state.solverRestartRevision)
+        {
+            solver.ApplySynchronizedRestart(state.solverRestartRevision);
+            appliedSolverRestartRevision = state.solverRestartRevision;
         }
 
         if (appliedCircuitRevision != state.circuitRevision)

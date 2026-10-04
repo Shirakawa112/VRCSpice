@@ -19,6 +19,8 @@ public class MnaSettingsPanel : UdonSharpBehaviour
     private float pendingTime;
     private int pendingNewton;
     private float nextRequestTime;
+    private int pendingRestartRevision = -1;
+    private float nextRestartRequestTime;
     private float timeInputChangedAt = float.MaxValue;
     private float newtonInputChangedAt = float.MaxValue;
 
@@ -67,6 +69,17 @@ public class MnaSettingsPanel : UdonSharpBehaviour
             newtonInputChangedAt = float.MaxValue;
         }
 
+        if (pendingRestartRevision >= 0)
+        {
+            if (state.solverRestartRevision != pendingRestartRevision)
+                pendingRestartRevision = -1;
+            else if (Time.time >= nextRestartRequestTime)
+            {
+                nextRestartRequestTime = Time.time + 1f;
+                circuitSync.RequestSimulationRestart();
+            }
+        }
+
         if (pendingScheme >= 0)
         {
             if (CurrentScheme() == pendingScheme && CurrentTime() == pendingTime && CurrentNewton() == pendingNewton)
@@ -109,6 +122,18 @@ public class MnaSettingsPanel : UdonSharpBehaviour
             newtonIterations < 1 || newtonIterations > 256) { Refresh(); return; }
         pendingScheme = scheme; pendingTime = outputDeltaTime;
         pendingNewton = newtonIterations; nextRequestTime = 0f;
+    }
+
+    public void RestartSimulation()
+    {
+        if (SharedMode())
+        {
+            state.Initialize();
+            pendingRestartRevision = state.solverRestartRevision;
+            nextRestartRequestTime = 0f;
+            circuitSync.RequestSimulationRestart();
+        }
+        else if (solver != null) solver.RestartSimulation();
     }
 
     public void ChangeSettings()

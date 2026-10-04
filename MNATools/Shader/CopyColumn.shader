@@ -44,12 +44,12 @@ Shader "Unlit/CopyColumn"
                 if(_SrcMatSize==0u)return 0u;
 
                 // Preserve the completed output count and its absolute time.
-                if(dst.y==0u && (dst.x==7u || dst.x==10u || dst.x==12u))
+                if(dst.y==0u && (dst.x==7u || dst.x==10u || dst.x==12u || dst.x==13u))
                     return _MainTex.Load(int3(dst,0));
 
                 uint dstOutput=4u+3u*_DstMatSize;
                 uint srcOutput=4u+3u*_SrcMatSize;
-                if(dst.y>=dstOutput && dst.y<dstOutput+256u && dst.x<=_DstMatSize)
+                if(dst.y>=dstOutput && dst.y<dstOutput+1000u && dst.x<=_DstMatSize)
                 {
                     uint sourceColumn=LoadSourceColumn(dst.x);
                     bool valid=dst.x==_DstMatSize?sourceColumn==_SrcMatSize:sourceColumn<_SrcMatSize;

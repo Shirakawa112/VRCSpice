@@ -10,6 +10,7 @@ Shader "Unlit/FlowControl"
         _OutputDeltaTime ("Uniform output interval", Float) = 0.01
         _SettingsRevision ("Settings revision", Integer) = 0
         _ClearHistoryRevision ("History revision", Integer) = 0
+        _RestartRevision ("Restart revision", Integer) = 0
         [HideInInspector] _BufferTemplate ("Solver Buffer Template", 2D) = "black" {}
         _A ("Static matrix", 2D) = "black" {}
         _B ("Charge matrix", 2D) = "black" {}
