@@ -7,8 +7,8 @@ Material:
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_Name: OscilloscopeCopy
-  m_Shader: {fileID: 4800000, guid: 8a8c196c0707f9347b8db5867c5eb3f7, type: 3}
+  m_Name: OscilloscopeTriggerCapture
+  m_Shader: {fileID: 4800000, guid: 9bc8818ff53a20143b9c94c7bc3299f1, type: 3}
   m_Parent: {fileID: 0}
   m_ModifiedSerializedProperties: 0
   m_ValidKeywords: []
@@ -23,11 +23,15 @@ Material:
   m_SavedProperties:
     serializedVersion: 3
     m_TexEnvs:
-    - _CaptureDump:
+    - _MainTex:
         m_Texture: {fileID: 0}
         m_Scale: {x: 1, y: 1}
         m_Offset: {x: 0, y: 0}
-    - _MainTex:
+    - _PreDump:
+        m_Texture: {fileID: 0}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
+    - _PreviousState:
         m_Texture: {fileID: 0}
         m_Scale: {x: 1, y: 1}
         m_Offset: {x: 0, y: 0}
@@ -40,11 +44,8 @@ Material:
         m_Scale: {x: 1, y: 1}
         m_Offset: {x: 0, y: 0}
     m_Ints:
-    - _ConfigRevision: 1
-    - _ForceRebuild: 0
     - _Row1: -1
     - _Row2: -1
-    - _SamplingRevision: 1
     - _Stride: 10
     m_Floats: []
     m_Colors: []

@@ -26,7 +26,7 @@ Shader "VRCSpice/Oscilloscope Waveform"
             float4 _LineColor;
             struct appdata { float4 vertex:POSITION; };
             struct v2g { float4 vertex:POSITION; };
-            struct g2f { float4 vertex:SV_POSITION; };
+            struct g2f { float4 vertex:SV_POSITION; float localY:TEXCOORD0; };
             v2g vert(appdata v){v2g o;o.vertex=v.vertex;return o;}
 
             // Two point primitives split the display at its centre. Keeping
@@ -56,12 +56,17 @@ Shader "VRCSpice/Oscilloscope Waveform"
                     }
                     float value=asfloat(_DisplayDump.Load(int3(channel+1u,history+1u,0)));
                     float x=-0.5+(float)slot/199.0;
-                    g2f o;o.vertex=UnityObjectToClipPos(float4(x,value*_YScale,0,1));
+                    float y=value*_YScale;
+                    g2f o;o.vertex=UnityObjectToClipPos(float4(x,y,0,1));o.localY=y;
                     stream.Append(o);
                 }
                 stream.RestartStrip();
             }
-            float4 frag(g2f input):SV_Target{return _LineColor;}
+            float4 frag(g2f input):SV_Target
+            {
+                clip(0.5-abs(input.localY));
+                return _LineColor;
+            }
             ENDCG
         }
     }
