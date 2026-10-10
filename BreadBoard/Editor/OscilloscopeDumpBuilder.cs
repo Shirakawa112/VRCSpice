@@ -16,6 +16,8 @@ public static class OscilloscopeDumpBuilder
     private const string ScenePath = "Assets/VRCSpice/Scene.unity";
     private const string ControllerScript = "Assets/VRCSpice/Oscilloscope/OscilloscopeController.cs";
     private const string ControllerAsset = "Assets/VRCSpice/Oscilloscope/OscilloscopeController.asset";
+    private const string TriggerSyncScript = "Assets/VRCSpice/Oscilloscope/OscilloscopeTriggerSettingsSync.cs";
+    private const string TriggerSyncAsset = "Assets/VRCSpice/Oscilloscope/OscilloscopeTriggerSettingsSync.asset";
     private const string ExtractMaterialPath = "Assets/VRCSpice/MNATools/Shader/SolverOutputDump.mat";
     private const string StateMaterialPath = "Assets/VRCSpice/Oscilloscope/OscilloscopeTriggerState.mat";
     private const string PreMaterialPath = "Assets/VRCSpice/Oscilloscope/OscilloscopeTriggerPre.mat";
@@ -28,17 +30,21 @@ public static class OscilloscopeDumpBuilder
         if (!condition) throw new System.Exception("Oscilloscope dump check failed: " + message);
     }
 
+    private static void EnsureProgramAsset(string scriptPath, string assetPath, string label)
+    {
+        UdonSharpProgramAsset program = AssetDatabase.LoadAssetAtPath<UdonSharpProgramAsset>(assetPath);
+        if (program != null) return;
+        MonoScript source = AssetDatabase.LoadAssetAtPath<MonoScript>(scriptPath);
+        Check(source != null, label + " script imported");
+        program = ScriptableObject.CreateInstance<UdonSharpProgramAsset>();
+        program.sourceCsScript = source;
+        AssetDatabase.CreateAsset(program, assetPath);
+    }
+
     private static void EnsureProgram()
     {
-        UdonSharpProgramAsset program = AssetDatabase.LoadAssetAtPath<UdonSharpProgramAsset>(ControllerAsset);
-        if (program == null)
-        {
-            MonoScript source = AssetDatabase.LoadAssetAtPath<MonoScript>(ControllerScript);
-            Check(source != null, "controller script imported");
-            program = ScriptableObject.CreateInstance<UdonSharpProgramAsset>();
-            program.sourceCsScript = source;
-            AssetDatabase.CreateAsset(program, ControllerAsset);
-        }
+        EnsureProgramAsset(ControllerScript, ControllerAsset, "controller");
+        EnsureProgramAsset(TriggerSyncScript, TriggerSyncAsset, "trigger settings sync");
         AssetDatabase.SaveAssets();
         AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport);
         UdonSharpProgramAsset.CompileAllCsPrograms(true);
@@ -262,6 +268,51 @@ public static class OscilloscopeDumpBuilder
             level.onEndEdit.GetPersistentEventCount() > 0, "trigger UI events connected");
     }
 
+    private static OscilloscopeTriggerSettingsSync EnsureTriggerSettingsSync(
+        GameObject oscillo, OscilloscopeController controller)
+    {
+        Transform triggerSyncTransform = oscillo.transform.Find("TriggerSettingsSync");
+        if (triggerSyncTransform == null)
+        {
+            GameObject triggerSyncObject = new GameObject("TriggerSettingsSync");
+            triggerSyncObject.transform.SetParent(oscillo.transform, false);
+            triggerSyncTransform = triggerSyncObject.transform;
+        }
+        OscilloscopeTriggerSettingsSync triggerSettingsSync =
+            triggerSyncTransform.GetComponent<OscilloscopeTriggerSettingsSync>();
+        if (triggerSettingsSync == null)
+            triggerSettingsSync = triggerSyncTransform.gameObject.AddUdonSharpComponent<OscilloscopeTriggerSettingsSync>();
+        controller.triggerSettingsSync = triggerSettingsSync;
+        triggerSettingsSync.controller = controller;
+        triggerSettingsSync.timeDivisionIndex = 2;
+        triggerSettingsSync.ch1VoltageDivision = 5f;
+        triggerSettingsSync.ch2VoltageDivision = 5f;
+        VRC.Udon.UdonBehaviour triggerSyncBacking =
+            UdonSharpEditorUtility.GetBackingUdonBehaviour(triggerSettingsSync);
+        triggerSyncBacking.SyncMethod = VRC.SDKBase.Networking.SyncType.Manual;
+        EditorUtility.SetDirty(triggerSyncBacking);
+        CopyProxy(triggerSettingsSync);
+        CopyProxy(controller);
+        return triggerSettingsSync;
+    }
+
+    [MenuItem("Tools/VRCSpice/Install shared oscilloscope trigger settings")]
+    public static void InstallTriggerSettingsSyncCurrentWorld()
+    {
+        EnsureProgram();
+        var scene = EditorSceneManager.OpenScene(ScenePath, OpenSceneMode.Single);
+        GameObject oscillo = GameObject.Find("Oscillo"); Check(oscillo != null, "Oscillo root");
+        OscilloscopeController controller = oscillo.GetComponent<OscilloscopeController>();
+        Check(controller != null, "OscilloscopeController");
+        OscilloscopeTriggerSettingsSync triggerSettingsSync = EnsureTriggerSettingsSync(oscillo, controller);
+        Check(controller.triggerSettingsSync == triggerSettingsSync &&
+            triggerSettingsSync.controller == controller, "shared trigger settings references");
+        EditorSceneManager.MarkSceneDirty(scene);
+        EditorSceneManager.SaveScene(scene);
+        AssetDatabase.SaveAssets();
+        Debug.Log("Installed shared oscilloscope trigger settings without rebuilding the oscilloscope UI.");
+    }
+
     [MenuItem("Tools/VRCSpice/Install oscilloscope output dump")]
     public static void BuildCurrentWorld()
     {
@@ -276,6 +327,7 @@ public static class OscilloscopeDumpBuilder
         MNASolve solver = solverTransform.GetComponent<MNASolve>(); Check(solver != null, "MNASolve");
         OscilloscopeController controller = oscillo.GetComponent<OscilloscopeController>();
         if (controller == null) controller = oscillo.AddUdonSharpComponent<OscilloscopeController>();
+        EnsureTriggerSettingsSync(oscillo, controller);
 
         Material extractor = EnsureMaterial(ExtractMaterialPath, "VRCSpice/Solver Output Dump");
         Material state = EnsureMaterial(StateMaterialPath, "VRCSpice/Oscilloscope Trigger State");
@@ -349,7 +401,9 @@ public static class OscilloscopeDumpBuilder
         CopyProxy(controller);
         VRC.Udon.UdonBehaviour backing = UdonSharpEditorUtility.GetBackingUdonBehaviour(controller);
         AddChangeEvent(scrollbar.onValueChanged, backing, nameof(OscilloscopeController.ChangeTimeDivision));
+        AddChangeEvent(yScale1.onSubmit, backing, nameof(OscilloscopeController.ChangeVoltageScale));
         AddChangeEvent(yScale1.onEndEdit, backing, nameof(OscilloscopeController.ChangeVoltageScale));
+        AddChangeEvent(yScale2.onSubmit, backing, nameof(OscilloscopeController.ChangeVoltageScale));
         AddChangeEvent(yScale2.onEndEdit, backing, nameof(OscilloscopeController.ChangeVoltageScale));
         Transform ch1Label = ui.Find("CH1divVLabel");
         Transform ch2Label = ui.Find("CH2divVLabel");
@@ -365,7 +419,7 @@ public static class OscilloscopeDumpBuilder
         EditorUtility.SetDirty(ch1); EditorUtility.SetDirty(ch2); EditorUtility.SetDirty(scrollbar);
         EditorSceneManager.MarkSceneDirty(scene); EditorSceneManager.SaveScene(scene);
         AssetDatabase.SaveAssets();
-        Debug.Log("Installed the HLSL 100+100 oscilloscope trigger and local trigger UI.");
+        Debug.Log("Installed the HLSL 100+100 oscilloscope trigger and shared trigger settings UI.");
     }
 
     private static void VerifyShader(string path, params string[] properties)
@@ -591,13 +645,57 @@ public static class OscilloscopeDumpBuilder
         Check(point != null && point.vertexCount == 2 && point.GetTopology(0) == MeshTopology.Points,
             "two-segment waveform point mesh");
         OscilloscopeController controller = GameObject.Find("Oscillo").GetComponent<OscilloscopeController>();
+        OscilloscopeTriggerSettingsSync triggerSettingsSync =
+            GameObject.Find("Oscillo/TriggerSettingsSync").GetComponent<OscilloscopeTriggerSettingsSync>();
+        Check(triggerSettingsSync != null && controller.triggerSettingsSync == triggerSettingsSync &&
+            triggerSettingsSync.controller == controller, "shared trigger settings references");
+        Check(UdonSharpEditorUtility.GetBackingUdonBehaviour(triggerSettingsSync).SyncMethod ==
+            VRC.SDKBase.Networking.SyncType.Manual, "trigger settings use Manual synchronization");
+        Check(AssetDatabase.LoadAssetAtPath<UdonSharpProgramAsset>(TriggerSyncAsset) != null,
+            "trigger settings sync program asset");
+        triggerSettingsSync.triggerEnabled = true;
+        triggerSettingsSync.triggerMode = 2;
+        triggerSettingsSync.triggerSource = 1;
+        triggerSettingsSync.triggerFalling = true;
+        triggerSettingsSync.triggerLevel = 1.25f;
+        triggerSettingsSync.timeDivisionIndex = 3;
+        triggerSettingsSync.ch1VoltageDivision = 2f;
+        triggerSettingsSync.ch2VoltageDivision = 5f;
+        triggerSettingsSync.settingsRevision = 7;
+        triggerSettingsSync.OnDeserialization();
+        Check(controller.triggerEnableScrollbar.value == 1f &&
+            controller.triggerModeScrollbar.value == 1f &&
+            controller.triggerSourceDropdown.value == 1 &&
+            controller.triggerEdgeScrollbar.value == 1f &&
+            controller.triggerLevelField.text == "1.25", "shared trigger settings update all controls");
+        Check(Mathf.Approximately(controller.timeDivScrollbar.value, 0.75f) &&
+            controller.yScaleField.text == "2" && controller.yScaleField2.text == "5" &&
+            Mathf.Approximately(controller.ch1Material.GetFloat("_YScale"), 1f / 16f) &&
+            Mathf.Approximately(controller.ch2Material.GetFloat("_YScale"), 1f / 40f),
+            "shared view settings update time and channel scales");
+        controller.triggerLevelField.SetTextWithoutNotify("NaN");
+        controller.ChangeTriggerSettings();
+        Check(controller.triggerLevelField.text == "1.25" &&
+            Mathf.Approximately(triggerSettingsSync.triggerLevel, 1.25f),
+            "invalid trigger level restores the accepted shared value");
+        triggerSettingsSync.triggerEnabled = false;
+        triggerSettingsSync.triggerMode = 0;
+        triggerSettingsSync.triggerSource = 0;
+        triggerSettingsSync.triggerFalling = false;
+        triggerSettingsSync.triggerLevel = 0f;
+        triggerSettingsSync.timeDivisionIndex = 2;
+        triggerSettingsSync.ch1VoltageDivision = 5f;
+        triggerSettingsSync.ch2VoltageDivision = 5f;
+        triggerSettingsSync.OnDeserialization();
         Check(controller.yScaleField != null && controller.yScaleField2 != null &&
             controller.yScaleField.gameObject.name == "InputFieldCH1divy" &&
             controller.yScaleField2.gameObject.name == "InputFieldCH2divy",
             "independent CH1 and CH2 voltage scale fields");
-        Check(controller.yScaleField.onEndEdit.GetPersistentEventCount() == 1 &&
+        Check(controller.yScaleField.onSubmit.GetPersistentEventCount() == 1 &&
+            controller.yScaleField.onEndEdit.GetPersistentEventCount() == 1 &&
+            controller.yScaleField2.onSubmit.GetPersistentEventCount() == 1 &&
             controller.yScaleField2.onEndEdit.GetPersistentEventCount() == 1,
-            "voltage scale input events connected once");
+            "voltage scale submit and end-edit events connected once");
         string oldScaleText1 = controller.yScaleField.text;
         string oldScaleText2 = controller.yScaleField2.text;
         controller.yScaleField.SetTextWithoutNotify("2");
@@ -606,6 +704,18 @@ public static class OscilloscopeDumpBuilder
         Check(Mathf.Approximately(controller.ch1Material.GetFloat("_YScale"), 1f / 16f) &&
             Mathf.Approximately(controller.ch2Material.GetFloat("_YScale"), 1f / 40f),
             "CH1 and CH2 voltage scales are independent");
+        controller.yScaleField.SetTextWithoutNotify("3");
+        controller.yScaleField2.SetTextWithoutNotify("4");
+        controller.timeDivScrollbar.SetValueWithoutNotify(1f);
+        controller.ChangeTimeDivision();
+        Check(triggerSettingsSync.timeDivisionIndex == 4 &&
+            Mathf.Approximately(triggerSettingsSync.ch1VoltageDivision, 3f) &&
+            Mathf.Approximately(triggerSettingsSync.ch2VoltageDivision, 4f) &&
+            controller.yScaleField.text == "3" && controller.yScaleField2.text == "4",
+            "time division change commits current voltage scale fields");
+        controller.yScaleField.SetTextWithoutNotify("2");
+        controller.yScaleField2.SetTextWithoutNotify("5");
+        controller.ChangeVoltageScale();
         string[] invalidScales = { "0", "-1", "NaN", "Infinity", "", "-" };
         foreach (string invalid in invalidScales)
         {

@@ -8,6 +8,7 @@ using VRC.SDKBase;
 public class OscilloscopeController : UdonSharpBehaviour
 {
     [SerializeField] public MNASolve solver;
+    [SerializeField] public OscilloscopeTriggerSettingsSync triggerSettingsSync;
     [SerializeField] public TMP_InputField probeField1;
     [SerializeField] public TMP_InputField probeField2;
     [SerializeField] public TMP_InputField yScaleField;
@@ -15,7 +16,7 @@ public class OscilloscopeController : UdonSharpBehaviour
     [SerializeField] public Scrollbar timeDivScrollbar;
     [SerializeField] public TMP_Text timeDivText;
 
-    [Header("Local trigger controls")]
+    [Header("Shared trigger controls")]
     [SerializeField] public Scrollbar triggerEnableScrollbar;
     [SerializeField] public Scrollbar triggerModeScrollbar;
     [SerializeField] public TMP_Dropdown triggerSourceDropdown;
@@ -51,6 +52,7 @@ public class OscilloscopeController : UdonSharpBehaviour
     private bool buffers0AreCurrent;
 
     private int stride = 10;
+    private int timeDivisionIndex = 2;
     private int samplingRevision = 1;
     private int triggerRevision = 1;
     private int row1 = int.MinValue;
@@ -62,6 +64,8 @@ public class OscilloscopeController : UdonSharpBehaviour
     private int stableProbeFrames;
     private float yDiv1 = float.NaN;
     private float yDiv2 = float.NaN;
+    private float acceptedYDiv1 = 5f;
+    private float acceptedYDiv2 = 5f;
     private bool firstCopy = true;
 
     private bool triggerEnabled;
@@ -86,13 +90,14 @@ public class OscilloscopeController : UdonSharpBehaviour
         if (timeDivScrollbar != null)
         {
             timeDivScrollbar.numberOfSteps = 5;
-            timeDivScrollbar.value = 0.5f;
+            timeDivScrollbar.SetValueWithoutNotify(0.5f);
         }
         InitializeTriggerControls();
-        ChangeTimeDivision();
+        ApplyTimeDivisionIndex(2);
         RefreshProbeRows(true);
-        RefreshVoltageScale(true);
-        RefreshTriggerLabels();
+        InitializeVoltageScale();
+        if (triggerSettingsSync != null) triggerSettingsSync.InitializeController();
+        else RefreshTriggerLabels();
     }
 
     private RenderTexture CreateBuffer(int width, int height)
@@ -138,13 +143,16 @@ public class OscilloscopeController : UdonSharpBehaviour
     public void ChangeTimeDivision()
     {
         int index = timeDivScrollbar == null ? 2 : Mathf.RoundToInt(timeDivScrollbar.value * 4f);
-        if (index <= 0) stride = 1;
-        else if (index == 1) stride = 5;
-        else if (index == 2) stride = 10;
-        else if (index == 3) stride = 50;
-        else stride = 100;
-        AdvanceSamplingConfiguration();
-        RefreshTimeLabel();
+        index = Mathf.Clamp(index, 0, 4);
+        float currentDiv1 = ReadVoltageScale(yScaleField, acceptedYDiv1, true);
+        float currentDiv2 = yScaleField2 == null ? currentDiv1 :
+            ReadVoltageScale(yScaleField2, acceptedYDiv2, true);
+        if (triggerSettingsSync != null)
+        {
+            triggerSettingsSync.SubmitViewSettings(index, currentDiv1, currentDiv2);
+            return;
+        }
+        ApplySharedViewSettings(index, currentDiv1, currentDiv2);
     }
 
     public void ChangeTriggerSettings()
@@ -155,26 +163,93 @@ public class OscilloscopeController : UdonSharpBehaviour
         int nextSource = triggerSourceDropdown == null ? 0 : Mathf.Clamp(triggerSourceDropdown.value, 0, 1);
         bool nextFalling = triggerEdgeScrollbar != null && triggerEdgeScrollbar.value >= 0.5f;
         float nextLevel = triggerLevel;
-        bool levelValid = true;
         if (triggerLevelField != null)
         {
             float parsed;
-            levelValid = float.TryParse(triggerLevelField.text, out parsed) &&
+            bool levelValid = float.TryParse(triggerLevelField.text, out parsed) &&
                 !float.IsNaN(parsed) && !float.IsInfinity(parsed);
-            if (levelValid) nextLevel = parsed;
-            else triggerLevelField.SetTextWithoutNotify(triggerLevel.ToString("G9"));
+            if (!levelValid)
+            {
+                RefreshTriggerControls();
+                RefreshTriggerLabels();
+                return;
+            }
+            nextLevel = parsed;
         }
 
-        bool changed = nextEnabled != triggerEnabled || nextMode != triggerMode ||
-            nextSource != triggerSource || nextFalling != triggerFalling ||
-            (levelValid && nextLevel != triggerLevel);
-        triggerEnabled = nextEnabled;
+        if (triggerSettingsSync != null)
+        {
+            triggerSettingsSync.SubmitSettings(nextEnabled, nextMode, nextSource, nextFalling, nextLevel);
+            return;
+        }
+        ApplySharedTriggerSettings(nextEnabled, nextMode, nextSource, nextFalling, nextLevel);
+    }
+
+    public void ApplySharedTriggerSettings(bool enabled, int mode, int source, bool falling, float level)
+    {
+        if (float.IsNaN(level) || float.IsInfinity(level))
+        {
+            RefreshTriggerControls();
+            RefreshTriggerLabels();
+            return;
+        }
+        int nextMode = Mathf.Clamp(mode, TriggerSingle, TriggerAuto);
+        int nextSource = Mathf.Clamp(source, 0, 1);
+        bool changed = enabled != triggerEnabled || nextMode != triggerMode ||
+            nextSource != triggerSource || falling != triggerFalling || level != triggerLevel;
+        triggerEnabled = enabled;
         triggerMode = nextMode;
         triggerSource = nextSource;
-        triggerFalling = nextFalling;
-        if (levelValid) triggerLevel = nextLevel;
+        triggerFalling = falling;
+        triggerLevel = level;
         if (changed) triggerRevision = NextRevision(triggerRevision);
+        RefreshTriggerControls();
         RefreshTriggerLabels();
+    }
+
+    public void ApplySharedViewSettings(int timeIndex, float ch1Div, float ch2Div)
+    {
+        int nextTimeIndex = Mathf.Clamp(timeIndex, 0, 4);
+        float nextDiv1 = IsValidVoltageDivision(ch1Div) ? ch1Div : 5f;
+        float nextDiv2 = IsValidVoltageDivision(ch2Div) ? ch2Div : 5f;
+        ApplyTimeDivisionIndex(nextTimeIndex);
+        acceptedYDiv1 = nextDiv1;
+        acceptedYDiv2 = nextDiv2;
+        if (yScaleField != null) yScaleField.SetTextWithoutNotify(nextDiv1.ToString("G9"));
+        if (yScaleField2 != null) yScaleField2.SetTextWithoutNotify(nextDiv2.ToString("G9"));
+        ApplyVoltageScale(nextDiv1, nextDiv2);
+    }
+
+    private void ApplyTimeDivisionIndex(int index)
+    {
+        int nextIndex = Mathf.Clamp(index, 0, 4);
+        int nextStride;
+        if (nextIndex <= 0) nextStride = 1;
+        else if (nextIndex == 1) nextStride = 5;
+        else if (nextIndex == 2) nextStride = 10;
+        else if (nextIndex == 3) nextStride = 50;
+        else nextStride = 100;
+        bool changed = nextIndex != timeDivisionIndex || nextStride != stride;
+        timeDivisionIndex = nextIndex;
+        stride = nextStride;
+        if (timeDivScrollbar != null)
+            timeDivScrollbar.SetValueWithoutNotify(nextIndex * 0.25f);
+        if (changed) AdvanceSamplingConfiguration();
+        RefreshTimeLabel();
+    }
+
+    private void RefreshTriggerControls()
+    {
+        if (triggerEnableScrollbar != null)
+            triggerEnableScrollbar.SetValueWithoutNotify(triggerEnabled ? 1f : 0f);
+        if (triggerModeScrollbar != null)
+            triggerModeScrollbar.SetValueWithoutNotify(triggerMode * 0.5f);
+        if (triggerSourceDropdown != null)
+            triggerSourceDropdown.SetValueWithoutNotify(triggerSource);
+        if (triggerEdgeScrollbar != null)
+            triggerEdgeScrollbar.SetValueWithoutNotify(triggerFalling ? 1f : 0f);
+        if (triggerLevelField != null)
+            triggerLevelField.SetTextWithoutNotify(triggerLevel.ToString("G9"));
     }
 
     private void RefreshTriggerLabels()
@@ -248,25 +323,51 @@ public class OscilloscopeController : UdonSharpBehaviour
 
     public void ChangeVoltageScale()
     {
-        RefreshVoltageScale(true);
+        float next1 = ReadVoltageScale(yScaleField, acceptedYDiv1, true);
+        float next2 = yScaleField2 == null ? next1 :
+            ReadVoltageScale(yScaleField2, acceptedYDiv2, true);
+        if (triggerSettingsSync != null)
+        {
+            triggerSettingsSync.SubmitViewSettings(timeDivisionIndex, next1, next2);
+            return;
+        }
+        ApplySharedViewSettings(timeDivisionIndex, next1, next2);
     }
 
-    private float ReadVoltageScale(TMP_InputField field, float current, bool commit)
+    private bool IsValidVoltageDivision(float value)
     {
-        float fallback = current > 0f && !float.IsNaN(current) && !float.IsInfinity(current) ? current : 1f;
+        return value > 0f && !float.IsNaN(value) && !float.IsInfinity(value);
+    }
+
+    private float ReadVoltageScale(TMP_InputField field, float fallback, bool commit)
+    {
+        if (!IsValidVoltageDivision(fallback)) fallback = 5f;
         if (field == null) return fallback;
         float parsed;
-        bool valid = float.TryParse(field.text, out parsed) && parsed > 0f &&
-            !float.IsNaN(parsed) && !float.IsInfinity(parsed);
+        bool valid = float.TryParse(field.text, out parsed) && IsValidVoltageDivision(parsed);
         if (valid) return parsed;
         if (commit) field.SetTextWithoutNotify(fallback.ToString("G9"));
         return fallback;
     }
 
-    private void RefreshVoltageScale(bool commit)
+    private void InitializeVoltageScale()
     {
-        float next1 = ReadVoltageScale(yScaleField, yDiv1, commit);
-        float next2 = yScaleField2 == null ? next1 : ReadVoltageScale(yScaleField2, yDiv2, commit);
+        acceptedYDiv1 = ReadVoltageScale(yScaleField, 5f, true);
+        acceptedYDiv2 = yScaleField2 == null ? acceptedYDiv1 :
+            ReadVoltageScale(yScaleField2, 5f, true);
+        ApplyVoltageScale(acceptedYDiv1, acceptedYDiv2);
+    }
+
+    private void PreviewVoltageScale()
+    {
+        float next1 = ReadVoltageScale(yScaleField, acceptedYDiv1, false);
+        float next2 = yScaleField2 == null ? next1 :
+            ReadVoltageScale(yScaleField2, acceptedYDiv2, false);
+        ApplyVoltageScale(next1, next2);
+    }
+
+    private void ApplyVoltageScale(float next1, float next2)
+    {
         if (next1 != yDiv1)
         {
             yDiv1 = next1;
@@ -316,7 +417,7 @@ public class OscilloscopeController : UdonSharpBehaviour
     private void LateUpdate()
     {
         RefreshProbeRows(false);
-        RefreshVoltageScale(false);
+        PreviewVoltageScale();
         RefreshTimeLabel();
         if (solver == null || triggerStateMaterial == null || triggerPreMaterial == null ||
             triggerCaptureMaterial == null || copyMaterial == null || state0 == null || state1 == null ||
